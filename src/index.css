@@ -1,0 +1,188 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Premium Dark Theme Color Palette */
+  --bg-color: #0d1117;
+  --bg-gradient: radial-gradient(circle at 10% 20%, rgb(20, 25, 33) 0%, rgb(13, 17, 23) 90%);
+  --surface-1: rgba(33, 38, 45, 0.6);
+  --surface-2: rgba(48, 54, 61, 0.7);
+  --border-color: rgba(240, 246, 252, 0.1);
+  --primary-color: #58a6ff;
+  --primary-glow: rgba(88, 166, 255, 0.4);
+  --secondary-color: #8b949e;
+  --text-main: #c9d1d9;
+  --text-muted: #8b949e;
+  --danger-color: #f85149;
+  --success-color: #3fb950;
+  
+  --font-family: 'Outfit', sans-serif;
+  
+  --shadow-sm: 0 4px 6px rgba(0,0,0,0.1);
+  --shadow-md: 0 10px 15px -3px rgba(0,0,0,0.2), 0 4px 6px -2px rgba(0,0,0,0.1);
+  --shadow-lg: 0 20px 25px -5px rgba(0,0,0,0.3), 0 10px 10px -5px rgba(0,0,0,0.2);
+  --shadow-glow: 0 0 15px var(--primary-glow);
+  
+  --border-radius-sm: 8px;
+  --border-radius-md: 12px;
+  --border-radius-lg: 20px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  background: var(--bg-color);
+  background-image: var(--bg-gradient);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.glass-panel {
+  background: var(--surface-1);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-md);
+}
+
+.premium-btn {
+  background: var(--surface-2);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  padding: 8px 16px;
+  border-radius: var(--border-radius-sm);
+  font-family: var(--font-family);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.premium-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(240, 246, 252, 0.2);
+}
+
+.premium-btn.primary {
+  background: var(--primary-color);
+  color: #000;
+  border-color: transparent;
+  box-shadow: var(--shadow-glow);
+}
+
+.premium-btn.primary:hover {
+  background: #79b8ff;
+  transform: translateY(-1px);
+}
+
+.premium-input {
+  background: rgba(13, 17, 23, 0.5);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+  padding: 10px 14px;
+  border-radius: var(--border-radius-sm);
+  font-family: var(--font-family);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  width: 100%;
+}
+
+.premium-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--secondary-color);
+}
+
+/* --- Mobile Responsiveness --- */
+
+/* Sidebar Toggle Overlay */
+.mobile-overlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+}
+
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  cursor: pointer;
+  padding: 8px;
+}
+
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column !important;
+  }
+  
+  .mobile-menu-btn {
+    display: block;
+  }
+
+  /* Sidebar behavior on mobile */
+  .sidebar-container {
+    position: fixed;
+    top: 0;
+    left: -300px; /* Hidden by default */
+    bottom: 0;
+    z-index: 50;
+    transition: left 0.3s ease;
+    width: 280px !important;
+  }
+
+  .sidebar-container.open {
+    left: 0;
+  }
+
+  .mobile-overlay.open {
+    display: block;
+  }
+
+  /* Adjust Kanban Board Header */
+  .board-header {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 12px;
+  }
+
+  /* Adjust Columns for easier swiping/scrolling on mobile */
+  .kanban-columns-container {
+    padding-bottom: 32px !important; /* Space for scan button */
+  }
+
+  .kanban-stage-column {
+    min-width: 85vw !important;
+    width: 85vw !important;
+  }
+}
