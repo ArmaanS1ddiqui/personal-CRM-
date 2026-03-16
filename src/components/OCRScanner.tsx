@@ -1,216 +1,329 @@
-import React, { useEffect, useState } from 'react';
-import { createWorker } from 'tesseract.js';
-import { useStore } from '../store/useStore';
-import { v4 as uuidv4 } from 'uuid';
-import { Loader2 } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useStore } from "../store/useStore";
+import { v4 as uuidv4 } from "uuid";
+import { Loader2 } from "lucide-react";
 
 export const OCRScanner: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const statusTimeoutRef = useRef<number | null>(null);
 
-  const activeBoardId = useStore(state => state.activeBoardId);
-  const boards = useStore(state => state.boards);
-  const stages = useStore(state => state.stages);
-  const addCard = useStore(state => state.addCard);
+  const activeBoardId = useStore((state) => state.activeBoardId);
+  const boards = useStore((state) => state.boards);
+  const stages = useStore((state) => state.stages);
+  const addCard = useStore((state) => state.addCard);
+
+  const getErrorMessage = (err: unknown): string => {
+    if (err instanceof Error) return err.message;
+    if (typeof err === "string") return err;
+    return "An unknown error occurred";
+  };
+
+  const showStatus = useCallback((message: string) => {
+    setStatusMessage(message);
+    if (statusTimeoutRef.current) window.clearTimeout(statusTimeoutRef.current);
+    statusTimeoutRef.current = window.setTimeout(
+      () => setStatusMessage(null),
+      3000,
+    );
+  }, []);
+
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+
+  const processImageWithGemini = useCallback(
+    async (imageBlob: Blob) => {
+      const boardId = activeBoardId;
+      if (!boardId) return;
+
+      const activeBoard = boards.find((b) => b.id === boardId);
+      if (!activeBoard) return;
+
+      const requestedFields =
+        activeBoard.formFields && activeBoard.formFields.length > 0
+          ? activeBoard.formFields
+          : ["Company Name", "Job Role", "Source"];
+
+      setIsProcessing(true);
+      showStatus("Sending image to Gemini...");
+
+      try {
+        const base64Image = await blobToBase64(imageBlob);
+        const mimeType = imageBlob.type || "image/png";
+
+        console.log("📤 Sending to Gemini Vision...");
+        console.log("MIME type:", mimeType);
+        console.log("Base64 length:", base64Image.length);
+        console.log("API Key present:", !!import.meta.env.VITE_GEMINI_API_KEY);
+
+        const prompt = `
+You are an AI assistant that extracts structured information from screenshots.
+
+Extract the following fields from the image:
+${requestedFields.map((f, i) => `${i + 1}. ${f}`).join("\n")}
+
+Return ONLY a JSON object with no markdown, no code fences, no extra text.
+Keys must exactly match the field names. Use "Unknown" if a field is not found.
+
+Example:
+{
+  ${requestedFields.map((f) => `"${f}": "extracted value"`).join(",\n  ")}
+}
+        `;
+
+        const requestBody = {
+          contents: [
+            {
+              parts: [
+                {
+                  inline_data: {
+                    mime_type: mimeType,
+                    data: base64Image,
+                  },
+                },
+                { text: prompt },
+              ],
+            },
+          ],
+          // ✅ No generationConfig needed
+        };
+
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody),
+          },
+        );
+
+        const data = await response.json();
+        console.log("📥 Gemini raw response:", JSON.stringify(data, null, 2));
+
+        if (!response.ok) {
+          const errorMessage =
+            (data as { error?: { message?: string } })?.error?.message ||
+            `HTTP ${response.status} ${response.statusText}`;
+          console.error(
+            "❌ Gemini API error details:",
+            (data as { error?: unknown })?.error,
+          );
+          throw new Error(errorMessage);
+        }
+
+        showStatus("Gemini responded — creating card.");
+
+        const jsonText = (
+          data as {
+            candidates?: { content?: { parts?: { text?: string }[] } }[];
+          }
+        )?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        console.log("📝 Extracted JSON text:", jsonText);
+
+        let parsedResult: Record<string, string> = {};
+        if (typeof jsonText === "string") {
+          try {
+            parsedResult = JSON.parse(jsonText) as Record<string, string>;
+            console.log("✅ Parsed result:", parsedResult);
+          } catch (parseErr) {
+            console.error("❌ JSON parse failed:", parseErr);
+            console.error("Raw text was:", jsonText);
+          }
+        } else {
+          console.warn(
+            "⚠️ No text in Gemini response. Full candidates:",
+            (data as { candidates?: unknown })?.candidates,
+          );
+        }
+
+        const fields = requestedFields.map((fieldName) => ({
+          id: uuidv4(),
+          name: fieldName,
+          value: parsedResult[fieldName] || "Unknown",
+        }));
+
+        const boardStages = stages
+          .filter((s) => s.boardId === boardId)
+          .sort((a, b) => a.order - b.order);
+
+        if (boardStages.length > 0) {
+          addCard(boardId, boardStages[0].id, fields);
+          showStatus("✅ Card created!");
+          console.log(
+            "✅ Card added to board:",
+            boardId,
+            "stage:",
+            boardStages[0].id,
+          );
+        } else {
+          console.warn("⚠️ No stages found for board:", boardId);
+        }
+      } catch (err) {
+        const message = getErrorMessage(err);
+        console.error("❌ Gemini Vision failed:", err);
+        showStatus("❌ Failed to process image.");
+        alert(
+          `Gemini Vision failed:\n\n${message}\n\nCheck the browser console (F12) for full details.`,
+        );
+      } finally {
+        setIsProcessing(false);
+      }
+    },
+    [activeBoardId, boards, stages, addCard, showStatus],
+  );
 
   useEffect(() => {
     const handlePaste = async (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
-      if (!items) return;
+      if (!items || !activeBoardId) return;
 
-      let imageBlob: Blob | null = null;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          imageBlob = items[i].getAsFile();
-          break;
-        }
-      }
-
-      if (!imageBlob || !activeBoardId) return;
-
-      const imageUrl = URL.createObjectURL(imageBlob);
-      processImage(imageUrl);
-    };
-
-    window.addEventListener('paste', handlePaste);
-    return () => window.removeEventListener('paste', handlePaste);
-  }, [activeBoardId, boards]);
-
-  const handleManualPasteTrigger = async () => {
-    try {
-      if (!activeBoardId) return;
-      const items = await navigator.clipboard.read();
       for (const item of items) {
-        if (item.types.includes('image/png') || item.types.includes('image/jpeg')) {
-          const blob = await item.getType(item.types.find(t => t.startsWith('image/')) as string);
-          const imageUrl = URL.createObjectURL(blob);
-          processImage(imageUrl);
+        if (item.type.startsWith("image/")) {
+          const blob = item.getAsFile();
+          if (blob) {
+            console.log("📋 Image pasted from clipboard, type:", item.type);
+            await processImageWithGemini(blob);
+          }
           return;
         }
       }
-      alert("No image found in clipboard. Please copy an image first.");
-    } catch (err) {
-      console.error("Clipboard read failed:", err);
-      alert("Unable to read clipboard. Please use Ctrl+V/Cmd+V to paste the image directly.");
-    }
-  };
 
-  const processImage = async (imageUrl: string) => {
-    setIsProcessing(true);
-    setProgress(0);
+      console.log("📋 Paste event fired but no image found in clipboard.");
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [activeBoardId, processImageWithGemini]);
+
+  useEffect(() => {
+    return () => {
+      if (statusTimeoutRef.current)
+        window.clearTimeout(statusTimeoutRef.current);
+    };
+  }, []);
+
+  const handleManualPasteTrigger = useCallback(async () => {
+    if (!activeBoardId) return;
+    if (!navigator.clipboard?.read) {
+      alert(
+        "Clipboard read not supported in this browser. Use Ctrl+V / Cmd+V to paste.",
+      );
+      return;
+    }
 
     try {
-      const worker = await createWorker('eng', 1, {
-        logger: (m: any) => {
-          if (m.status === 'recognizing text') {
-            setProgress(Math.round(m.progress * 100));
-          }
-        }
-      });
+      console.log("📋 Reading clipboard via navigator.clipboard.read()...");
+      const items = await navigator.clipboard.read();
+      console.log(
+        "📋 Clipboard item types:",
+        items.map((i) => i.types),
+      );
 
-      const { data: { text } } = await worker.recognize(imageUrl);
-      await worker.terminate();
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (!imageType) continue;
 
-      await parseTextWithGeminiAndCreateCard(text);
+        const blob = await item.getType(imageType);
+        console.log(
+          "📋 Found image in clipboard:",
+          imageType,
+          "size:",
+          blob.size,
+        );
+        await processImageWithGemini(blob);
+        return;
+      }
+
+      alert("No image found in clipboard. Copy a screenshot first.");
     } catch (err) {
-      console.error("OCR Failed", err);
-      alert("OCR Processing failed. Please try again.");
-    } finally {
-      setIsProcessing(false);
-      setProgress(0);
-      URL.revokeObjectURL(imageUrl);
+      const message = getErrorMessage(err);
+      console.error("❌ Clipboard read failed:", err);
+      alert(
+        `Unable to read clipboard: ${message}. Try Ctrl+V / Cmd+V instead.`,
+      );
     }
-  };
+  }, [activeBoardId, processImageWithGemini]);
 
-  const parseTextWithGeminiAndCreateCard = async (text: string) => {
-    const activeBoard = boards.find(b => b.id === activeBoardId);
-    if (!activeBoard) return;
-
-    // Use board form fields if defined, else use fallback defaults
-    const requestedFields = activeBoard.formFields && activeBoard.formFields.length > 0 
-      ? activeBoard.formFields 
-      : ['Company Name', 'Job Role', 'Source'];
-
-    let parsedResult: Record<string, string> = {};
-
-    try {
-      const prompt = `
-        You are an AI assistant that extracts information from raw OCR text of a screenshot.
-        
-        The user wants to extract the following specific fields from the text:
-        ${requestedFields.map((f, i) => `${i + 1}. ${f}`).join('\n        ')}
-        
-        Return the response AS A JSON OBJECT EXACTLY in the following format, with no markdown formatting or extra text.
-        Make the JSON keys exactly match the requested field names. 
-        If a field's information cannot be found in the text, put "Unknown".
-        
-        Example Output Format:
-        {
-          ${requestedFields.map(f => `"${f}": "extracted value"`).join(',\n          ')}
-        }
-        
-        Raw OCR Text:
-        """
-        ${text}
-        """
-      `;
-
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }],
-          generationConfig: {
-            responseMimeType: "application/json"
-          }
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.candidates && data.candidates.length > 0) {
-        let jsonText = data.candidates[0].content.parts[0].text;
-        parsedResult = JSON.parse(jsonText);
-      }
-    } catch (error) {
-      console.error("Error calling Gemini API:", error);
-    }
-
-    // Creating Card payload mapping back to requested fields
-    const fields = requestedFields.map(fieldName => ({
-      id: uuidv4(),
-      name: fieldName,
-      value: parsedResult[fieldName] || 'Unknown'
-    }));
-    
-    // Always append raw text source
-    fields.push({ 
-      id: uuidv4(), 
-      name: 'Extracted Text', 
-      value: text.length > 100 ? text.substring(0, 100) + '...' : text 
-    });
-
-    // Find first stage of active board
-    const boardStages = stages.filter(s => s.boardId === activeBoardId).sort((a, b) => a.order - b.order);
-    if (boardStages.length > 0) {
-      addCard(activeBoardId!, boardStages[0].id, fields);
-    }
-  };
-
-  if (isProcessing) {
-    return (
-      <div style={{
-        position: 'fixed', bottom: '24px', right: '24px',
-        background: 'var(--surface-1)', backdropFilter: 'blur(10px)',
-        border: '1px solid var(--primary-glow)', borderRadius: 'var(--border-radius-md)',
-        padding: '16px 24px', display: 'flex', alignItems: 'center', gap: '16px',
-        boxShadow: 'var(--shadow-lg)', zIndex: 9999
-      }}>
-        <Loader2 className="spinner" size={24} color="var(--primary-color)" style={{ animation: 'spin 1s linear infinite' }} />
-        <div>
-          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600 }}>Scanning Screenshot...</h4>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-            {progress}% complete
-          </div>
-        </div>
-        <style>{`
-          @keyframes spin { 100% { transform: rotate(360deg); } }
-        `}</style>
-      </div>
-    );
-  }
-
-  // Persistent manual scan button
   if (!activeBoardId) return null;
 
   return (
-    <div style={{
-      position: 'fixed', bottom: '24px', right: '24px', zIndex: 9998
-    }}>
-      <button 
-        className="premium-btn primary"
-        onClick={handleManualPasteTrigger}
+    <>
+      {isProcessing && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: "80px",
+            right: "24px",
+            background: "var(--surface-1)",
+            backdropFilter: "blur(10px)",
+            border: "1px solid var(--primary-glow)",
+            borderRadius: "var(--border-radius-md)",
+            padding: "16px 24px",
+            display: "flex",
+            alignItems: "center",
+            gap: "16px",
+            boxShadow: "var(--shadow-lg)",
+            zIndex: 9999,
+          }}
+        >
+          <Loader2
+            size={24}
+            color="var(--primary-color)"
+            style={{ animation: "spin 1s linear infinite" }}
+          />
+          <div>
+            <h4 style={{ margin: 0, fontSize: "0.95rem", fontWeight: 600 }}>
+              Sending to Gemini Vision...
+            </h4>
+            {statusMessage && (
+              <div
+                style={{
+                  fontSize: "0.8rem",
+                  color: "var(--text-muted)",
+                  marginTop: "4px",
+                }}
+              >
+                {statusMessage}
+              </div>
+            )}
+          </div>
+          <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+        </div>
+      )}
+
+      <div
         style={{
-          boxShadow: 'var(--shadow-lg), 0 0 15px var(--primary-glow)',
-          padding: '12px 20px',
-          borderRadius: 'var(--border-radius-lg)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px',
-          fontWeight: 600
+          position: "fixed",
+          bottom: "24px",
+          right: "24px",
+          zIndex: 9998,
         }}
       >
-        <span style={{ fontSize: '1.2rem' }}>📸</span> Scan Image (Paste)
-      </button>
-    </div>
+        <button
+          className="premium-btn primary"
+          onClick={handleManualPasteTrigger}
+          style={{
+            boxShadow: "var(--shadow-lg), 0 0 15px var(--primary-glow)",
+            padding: "12px 20px",
+            borderRadius: "var(--border-radius-lg)",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            fontWeight: 600,
+          }}
+        >
+          <span style={{ fontSize: "1.2rem" }}>📸</span> Scan Image (Paste)
+        </button>
+      </div>
+    </>
   );
-
 };
