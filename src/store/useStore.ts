@@ -39,9 +39,11 @@ interface BoardState {
   stages: Stage[];
   cards: Card[];
   activeBoardId: string | null;
+  activeView: 'kanban' | 'dashboard';
 
   // Actions
   setActiveBoard: (id: string | null) => void;
+  setActiveView: (view: 'kanban' | 'dashboard') => void;
   addBoard: (name: string) => void;
   updateBoard: (id: string, name: string) => void;
   deleteBoard: (id: string) => void;
@@ -88,8 +90,10 @@ export const useStore = create<BoardState>()(
         }
       ],
       activeBoardId: DEFAULT_JOB_BOARD_ID,
+      activeView: 'kanban',
 
-      setActiveBoard: (id) => set({ activeBoardId: id }),
+      setActiveBoard: (id) => set({ activeBoardId: id, activeView: 'kanban' }),
+      setActiveView: (view) => set({ activeView: view }),
 
       addBoard: (name) => {
         const newBoardId = uuidv4();

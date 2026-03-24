@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../store/useStore';
-import { Plus, Settings, Menu } from 'lucide-react';
+import { Plus, Settings, Menu, BarChart2 } from 'lucide-react';
 import { StageColumn } from './StageColumn';
 import { BoardSettingsModal } from './BoardSettingsModal';
 import { 
@@ -29,6 +29,7 @@ export const KanbanBoard: React.FC<{ boardId: string }> = ({ boardId }) => {
   const cards = useMemo(() => rawCards.filter(c => c.boardId === boardId), [rawCards, boardId]);
   const addStage = useStore(state => state.addStage);
   const moveCard = useStore(state => state.moveCard);
+  const setActiveView = useStore(state => state.setActiveView);
 
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [isAddingStage, setIsAddingStage] = useState(false);
@@ -127,6 +128,13 @@ export const KanbanBoard: React.FC<{ boardId: string }> = ({ boardId }) => {
               <Settings size={20} />
             </button>
           </div>
+          <button
+            className="premium-btn border-ghost"
+            onClick={() => setActiveView('dashboard')}
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}
+          >
+            <BarChart2 size={18} /> Dashboard
+          </button>
         </header>
         
         <div className="kanban-columns-container" style={{ 
