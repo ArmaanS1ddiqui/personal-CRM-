@@ -16,6 +16,8 @@ export const Dashboard: React.FC<{ boardId: string }> = ({ boardId }) => {
 
   // Group cards by creation date
   const chartData = useMemo(() => {
+    if (cards.length === 0) return [];
+
     const countsByDate: Record<string, number> = {};
     
     cards.forEach(card => {
@@ -32,17 +34,35 @@ export const Dashboard: React.FC<{ boardId: string }> = ({ boardId }) => {
         return new Date(a).getTime() - new Date(b).getTime();
     });
 
-    return sortedDates.map(dateKey => {
-      // format nicely for display
-      const displayDate = new Date(dateKey + 'T12:00:00Z').toLocaleDateString('en-US', {
+    if (sortedDates.length === 0) return [];
+
+    const minDateStr = sortedDates[0];
+    const maxDateStr = new Date().toISOString().split('T')[0];
+    
+    // Use T12:00:00Z to avoid timezone/DST shifting issues when adding days
+    const startDate = new Date(minDateStr + 'T12:00:00Z');
+    const endDate = new Date(maxDateStr + 'T12:00:00Z');
+    
+    // Safeguard in case maxDate is somehow earlier than startDate
+    const finalEndDate = endDate < startDate ? startDate : endDate;
+
+    const filledData = [];
+    const currentDate = new Date(startDate);
+
+    while (currentDate <= finalEndDate) {
+      const dateKey = currentDate.toISOString().split('T')[0];
+      const displayDate = currentDate.toLocaleDateString('en-US', {
         month: 'short', 
         day: 'numeric'
       });
-      return {
+      filledData.push({
         date: displayDate,
-        leads: countsByDate[dateKey]
-      };
-    });
+        leads: countsByDate[dateKey] || 0
+      });
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    return filledData;
   }, [cards]);
 
   if (!board) return null;
